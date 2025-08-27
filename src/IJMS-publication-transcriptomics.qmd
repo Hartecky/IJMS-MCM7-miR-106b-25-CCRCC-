@@ -1,0 +1,332 @@
+---
+title: "The Role of MCM7 and Its Hosted miR-106b-25 Cluster in Renal Cancer Progression"
+author: 
+  - name: "Bartłomiej Hofman"
+    affiliation: "Independent researcher"
+    email: "hofman.bartlomiej@gmail.com"
+date: "2025-08-27"
+abstract: |
+  Renal cancer is among the deadliest human malignancies. MCM7 is a cell cycle- regulating gene frequently overexpressed in human cancers and associated with hyperproliferation and cancer progression. miR-25-3p, miR-93-5p, and miR-106b-5p form the miR-106b-25 cluster, located within the MCM7 gene. This study aims to determine whether overexpressed miRNAs in ccRCC regulate common target genes and enhance one another’s effect. We also examine whether MCM7 and miR-106b-25 cluster act synergistically to promote tumor progression. Material isolated from ccRCC and control tissues was analysed to assess the expression of MCM7 and genes targeted by miR-106b-25 cluster. Functional studies using RCC-derived cell lines were conducted to evaluate the effects of miRNA overexpression on target gene expression, as well as the contributions of MCM7 and miR-106b-25 cluster to renal cancer progression. We demonstrate that MCM7 is upregulated at both transcript and protein levels in RCC, contributing to cancer progression by regulating cell proliferation and modulating caspase 3/7 activity. Additionally, we confirm that the miRNAs from miR-106b-25 cluster regulate the expression of cancer-related genes and may contribute to their dysregulated levels in RCC. These findings indicate that both MCM7 and the entire miR- 106b-25 cluster are involved in renal cancer progression..
+keywords: [ renal cancer; MCM7 gene; miR-106b-25 cluster; ccRCC (clear cell Renal Cell Carcinoma); miR-25; miR-93; miR-106b; oncomiR; cancer progression]
+description: ""
+license: "CC-BY-4.0"
+csl: nature.csl
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    theme: cosmo
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+
+---
+
+# Transcriptomics - TCGA-KIRC RNA-seq data analysis
+
+## Loading libraries
+
+```{r}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(tidyverse)
+library(DESeq2)
+library(ggrepel)
+library(ggpubr)
+library(biomaRt)
+
+# Additional gene list for downstream analysis
+shorter_gene_list <- c("ATXN1", "BRMS1L", "CPEB3", "DNAJB9", "KIF3B", 
+                       "NEDD4L", "PTPRJ", "RBL2", "SMAD7", "NFIB")
+
+# Connect to Ensembl
+ensembl <- useEnsembl(biomart = "genes", 
+                      dataset = "hsapiens_gene_ensembl")
+
+# Get gene symbols
+gene_info <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                   filters = "hgnc_symbol",
+                   values = c("MCM7", shorter_gene_list),
+                   mart = ensembl) %>%
+  rename(c("ensembl_id" = "ensembl_gene_id",
+           "gene_symbol" = "hgnc_symbol"))
+```
+
+## Retrieve data from TCGA using TCGAbiolinks package
+```{r}
+# Prepare a query for TCGA - KIRC dataset
+
+# KIRC_query <- GDCquery(project = "TCGA-KIRC",
+#                        data.category = "Transcriptome Profiling",
+#                        data.type = "Gene Expression Quantification",
+#                        workflow.type = "STAR - Counts")
+# 
+# # Download the data
+# GDCdownload(KIRC_query)
+# 
+# # Read the data as a summarized experiment and
+# # subet it into counts and TPM
+# KIRC_data <- GDCprepare(KIRC_query)
+
+
+load("data/TCGA_transcriptomics.RData")
+
+KIRC_data_counts <- assay(KIRC_data, "unstranded")
+```
+
+
+## Data processing
+```{r}
+# Prepare feature data
+feature_data <- as.data.frame(KIRC_data@rowRanges) %>%
+  filter(gene_type %in% c("protein_coding", "miRNA")) %>%
+  dplyr::select(c(10,12))
+
+# Remove sample assigned to "Additional - New Primary" which is directly 
+# barcode TCGA-DV-A4W0-05A-11R-A266-07
+
+# Prepare count data, retain only protein coding genes & microRNAs
+KIRC_data_counts_filtered <- KIRC_data_counts %>% 
+  as.data.frame() %>% 
+  dplyr::select(-c(`TCGA-DV-A4W0-05A-11R-A266-07`)) %>%
+  filter(rownames(.) %in% feature_data$gene_id)
+
+# Retrieve clinical data
+clinical <- as.data.frame(KIRC_data@colData) %>%
+  filter(barcode != "TCGA-DV-A4W0-05A-11R-A266-07") %>%
+  mutate(definition = as.factor(definition)) %>%
+  mutate(definition = relevel(definition, ref = "Solid Tissue Normal"))
+
+# Prepare DDS object & normalize to VST
+dds <- DESeqDataSetFromMatrix(countData = KIRC_data_counts_filtered,
+                              colData = clinical,
+                              design = ~ definition)
+
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+
+# Variance stabilizing transformation
+vsd <- vst(dds, blind = FALSE)  
+vsd_mat <- assay(vsd) %>% 
+  as.data.frame() %>%
+  rownames_to_column(var = "gene_id") %>%
+  left_join(., feature_data, by = "gene_id") %>%
+  filter(gene_name %in% shorter_gene_list) %>%
+  column_to_rownames("gene_name") %>%
+  dplyr::select(-c(gene_id))
+
+# convert data into long format and prepare boxplots
+# ------------------------------------------------------------------------------
+# Convert data into long format and make boxplots
+
+clinical_subset <- clinical %>%
+  dplyr::select(c(barcode, sample_type, ajcc_pathologic_stage))
+
+boxplot_data_transcriptomics <- assay(vsd) %>% as.data.frame() %>%
+  rownames_to_column(var = "gene_id") %>%
+  left_join(., feature_data, by = "gene_id") %>%
+  filter(gene_name %in% c(shorter_gene_list, "MCM7")) %>%
+  dplyr::select(-c(gene_id)) %>%
+  reshape2::melt() %>%
+  dplyr::rename(c("gene_name" = "gene_name",
+                  "barcode" = "variable",
+                  "vst" = "value")) %>%
+  left_join(., clinical_subset, by = "barcode") %>%
+  mutate(sample_type = ifelse(sample_type == "Primary Tumor", "Tumor", "Normal"))
+```
+
+## Boxplots visualization & statistical inference
+
+### MCM7 
+
+```{r}
+boxplot_data_transcriptomics %>%
+  filter(gene_name == "MCM7") %>%
+  # First map stages to simplified groups
+  mutate(ajcc_pathologic_stage = case_when(
+    ajcc_pathologic_stage %in% c("Stage I", "Stage IA", "Stage IB", "Stage II") & sample_type == "Normal" ~ "N1",
+    ajcc_pathologic_stage %in% c("Stage I", "Stage IA", "Stage IB", "Stage II") & sample_type == "Tumor" ~ "T1",
+    ajcc_pathologic_stage %in% c("Stage III", "Stage IIIA", "Stage IIIB", "Stage IV") & sample_type == "Normal" ~ "N2",
+    ajcc_pathologic_stage %in% c("Stage III", "Stage IIIA", "Stage IIIB", "Stage IV") & sample_type == "Tumor" ~ "T2",
+    is.na(ajcc_pathologic_stage) & sample_type == "Normal" ~ "Nall",
+    is.na(ajcc_pathologic_stage) & sample_type == "Tumor" ~ "Tall" 
+  )) %>% bind_rows((boxplot_data_transcriptomics %>%
+                      filter(gene_name == "MCM7") %>%
+                      mutate(ajcc_pathologic_stage = case_when(
+                        sample_type == "Normal" ~ "Nall",
+                        sample_type == "Tumor" ~ "Tall",
+                        TRUE ~ NA_character_)))) %>%
+  mutate(ajcc_pathologic_stage = factor(ajcc_pathologic_stage,
+                                        levels = c("N1", "T1", "N2", "T2", "Nall", "Tall"))) %>%
+  ggplot(aes(x = ajcc_pathologic_stage, y = vst, fill = sample_type)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.05, position = position_jitterdodge(jitter.width = 0.1)) +
+  stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
+                     method = "wilcox.test", 
+                     label = "p.format") +
+  theme_pubr(base_size = 20) + 
+  scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
+  labs(title = "MCM7",
+       x = "",
+       y = "VST",
+       fill = "")
+```
+
+### Genes of interest
+``` {r}
+boxplot_data_transcriptomics %>%
+  filter(gene_name %in% shorter_gene_list) %>%
+  mutate(ajcc_pathologic_stage = case_when(
+    ajcc_pathologic_stage %in% c("Stage I", "Stage IA", "Stage IB", "Stage II") & sample_type == "Normal" ~ "N1",
+    ajcc_pathologic_stage %in% c("Stage I", "Stage IA", "Stage IB", "Stage II") & sample_type == "Tumor" ~ "T1",
+    ajcc_pathologic_stage %in% c("Stage III", "Stage IIIA", "Stage IIIB", "Stage IV") & sample_type == "Normal" ~ "N2",
+    ajcc_pathologic_stage %in% c("Stage III", "Stage IIIA", "Stage IIIB", "Stage IV") & sample_type == "Tumor" ~ "T2",
+    is.na(ajcc_pathologic_stage) & sample_type == "Normal" ~ "Nall",
+    is.na(ajcc_pathologic_stage) & sample_type == "Tumor" ~ "Tall" 
+  )) %>% bind_rows((boxplot_data_transcriptomics %>%
+                      filter(gene_name %in% shorter_gene_list) %>%
+                      mutate(ajcc_pathologic_stage = case_when(
+                        sample_type == "Normal" ~ "Nall",
+                        sample_type == "Tumor" ~ "Tall",
+                        TRUE ~ NA_character_)))) %>%
+  mutate(ajcc_pathologic_stage = factor(ajcc_pathologic_stage,
+                                        levels = c("N1", "T1", "N2", "T2", "Nall", "Tall"))) %>%
+  filter(gene_name != "MCM7") %>%
+  ggplot(aes(x = ajcc_pathologic_stage, y = vst, fill = sample_type)) + 
+  geom_boxplot(outlier.shape = NA) +
+  facet_wrap(~gene_name, nrow = 5, ncol = 5, scales = "free") +
+  stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
+                     method = "wilcox.test", 
+                     label = "p.format") +
+  theme_pubr(base_size = 14, legend = "right") + 
+  scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
+  labs(title = "miR-106b-25 targets in ccRCC",
+       x = "",
+       y = "VST",
+       fill = "")
+```
+
+# Proteomics - CPTAC pancan CCRCC data analysis
+
+## Load data from LinkedOmics resources
+
+[Linkedomics CPTAC pancan-CCRCC dataset](https://www.linkedomics.org/data_download/CPTAC-pancan-CCRCC/)
+
+```{r}
+# Load metadata
+
+CCRCC_meta <- read.delim("C:/Users/hofma/Desktop/MCM7_project/data/CPTAC/CCRCC_meta.txt")[-1, ]
+CCRCC_meta <- CCRCC_meta %>%
+ dplyr::select(c(case_id, Stage)) %>%
+ mutate(case_id = gsub('-', '.', case_id))
+
+names(CCRCC_meta) <- c("sample_id", "stage")
+
+# Load proteomics expression data
+# Load proteomics data
+Tumor_ratio <- read.delim("C:/Users/hofma/Desktop/MCM7_project/data/CPTAC/CCRCC_proteomics_gene_abundance_log2_reference_intensity_normalized_Tumor.txt")
+Normal_ratio <- read.delim("C:/Users/hofma/Desktop/MCM7_project/data/CPTAC/CCRCC_proteomics_gene_abundance_log2_reference_intensity_normalized_Normal.txt")
+
+common_samples <- intersect(names(Normal_ratio), names(Tumor_ratio))[-1]
+common_proteins <- intersect(Normal_ratio$idx, Tumor_ratio$idx)
+```
+
+## Data processing 
+```{r}
+Tumor_ratio <- Tumor_ratio %>%
+  reshape2::melt() %>%
+  dplyr::rename(c("ensembl_id" = "idx",
+           "sample_id" = "variable",
+           "protein_expression" = "value")) %>%
+  mutate(Condition = "Tumor",
+         new_sample_id = paste0(sample_id, "_", Condition)) %>%
+  filter(sample_id %in% common_samples & ensembl_id %in% common_proteins) %>%
+  mutate(ensembl_id = str_remove(ensembl_id, "\\..*"))
+
+Normal_ratio <- Normal_ratio %>%
+  reshape2::melt() %>%
+  dplyr::rename(c("ensembl_id" = "idx",
+                  "sample_id" = "variable",
+                  "protein_expression" = "value")) %>%
+  mutate(Condition = "Normal",
+         new_sample_id = paste0(sample_id, "_", Condition)) %>%
+  filter(sample_id %in% common_samples & ensembl_id %in% common_proteins) %>%
+  mutate(ensembl_id = str_remove(ensembl_id, "\\..*"))
+
+
+Combined_DF <- rbind(Tumor_ratio, Normal_ratio)
+
+boxplot_data_proteomics <- Combined_DF %>%
+  left_join(., gene_info, by = "ensembl_id") %>%
+  filter(gene_symbol %in% c(shorter_gene_list, "MCM7")) %>%
+  left_join(., CCRCC_meta, by = "sample_id")
+```
+
+## Boxplots visualization & statistical inference
+
+### MCM7
+```{r}
+boxplot_data_proteomics %>%
+  filter(gene_symbol == "MCM7") %>%
+  mutate(stage = case_when(
+    stage %in% c("Stage I", "Stage II") & Condition == "Normal" ~ "N1",
+    stage %in% c("Stage I", "Stage II") & Condition == "Tumor" ~ "T1",
+    stage %in% c("Stage III", "Stage IV") & Condition == "Normal" ~ "N2",
+    stage %in% c("Stage III", "Stage IV") & Condition == "Tumor" ~ "T2")) %>%
+  bind_rows((boxplot_data_proteomics %>%
+                   filter(gene_symbol == "MCM7") %>%
+                   mutate(stage = case_when(
+                     Condition == "Normal" ~ "Nall",
+                     Condition == "Tumor" ~ "Tall",
+                     TRUE ~ NA_character_)))) %>%
+  mutate(stage = factor(stage,
+                        levels = c("N1", "T1", "N2", "T2", "Nall", "Tall"))) %>%
+  ggplot(aes(x = stage, y = protein_expression, fill = Condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.2, position = position_jitterdodge(jitter.width = 0.2)) +
+  stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")),
+                     method = "wilcox.test",
+                     label = "p.format") +
+  theme_pubr(base_size = 20) +
+  scale_fill_manual(values = c("Tumor" = "tomato",
+                               "Normal" = "steelblue")) +
+  labs(title = "MCM7",
+       x = "",
+       y = "log2(MS1 intensity)",
+       fill = " ")
+```
+
+### Genes of interest
+```{r}
+boxplot_data_proteomics %>%
+  filter(gene_symbol %in% shorter_gene_list) %>%  
+  mutate(stage = case_when(
+  stage %in% c("Stage I", "Stage II") & Condition == "Normal" ~ "N1",
+  stage %in% c("Stage I", "Stage II") & Condition == "Tumor" ~ "T1",
+  stage %in% c("Stage III", "Stage IV") & Condition == "Normal" ~ "N2",
+  stage %in% c("Stage III", "Stage IV") & Condition == "Tumor" ~ "T2")) %>%
+  bind_rows((boxplot_data_proteomics %>%
+               filter(gene_symbol %in% shorter_gene_list) %>%
+               mutate(stage = case_when(
+                 Condition == "Normal" ~ "Nall",
+                 Condition == "Tumor" ~ "Tall",
+                 TRUE ~ NA_character_)))) %>%
+  mutate(stage = factor(stage,
+                        levels = c("N1", "T1", "N2", "T2", "Nall", "Tall"))) %>%
+  ggplot(aes(x = stage, y = protein_expression, fill = Condition)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(alpha = 0.1, position = position_jitterdodge(jitter.width = 0.2)) +
+  facet_wrap(~gene_symbol, scales = "free") +
+  stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
+                     method = "wilcox.test", 
+                     label = "p.format") +
+  theme_pubr(base_size = 14, legend = "right") + 
+  scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
+  labs(title = "miR-106b-25 targets in ccRCC",
+       x = "",
+       y = "log2(MS1 intensity)",
+       fill = " ")
+```
