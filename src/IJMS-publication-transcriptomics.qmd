@@ -59,21 +59,16 @@ gene_info <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
 ```{r}
 # Prepare a query for TCGA - KIRC dataset
 
-# KIRC_query <- GDCquery(project = "TCGA-KIRC",
-#                        data.category = "Transcriptome Profiling",
-#                        data.type = "Gene Expression Quantification",
-#                        workflow.type = "STAR - Counts")
-# 
-# # Download the data
-# GDCdownload(KIRC_query)
-# 
-# # Read the data as a summarized experiment and
-# # subet it into counts and TPM
-# KIRC_data <- GDCprepare(KIRC_query)
+KIRC_query <- GDCquery(project = "TCGA-KIRC",
+                       data.category = "Transcriptome Profiling",
+                       data.type = "Gene Expression Quantification",
+                       workflow.type = "STAR - Counts")
 
+# Download the data
+GDCdownload(KIRC_query)
 
-load("data/TCGA_transcriptomics.RData")
-
+# Read the data as a summarized experiment and get counts
+KIRC_data <- GDCprepare(KIRC_query)
 KIRC_data_counts <- assay(KIRC_data, "unstranded")
 ```
 
