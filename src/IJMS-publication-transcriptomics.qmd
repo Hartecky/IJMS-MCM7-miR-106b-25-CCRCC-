@@ -161,7 +161,7 @@ boxplot_data_transcriptomics %>%
   geom_jitter(alpha = 0.05, position = position_jitterdodge(jitter.width = 0.1)) +
   stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
                      method = "wilcox.test", 
-                     label = "p.format") +
+                     label = "p.signif") +
   theme_pubr(base_size = 20) + 
   scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
   labs(title = "MCM7",
@@ -195,7 +195,7 @@ boxplot_data_transcriptomics %>%
   facet_wrap(~gene_name, nrow = 5, ncol = 5, scales = "free") +
   stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
                      method = "wilcox.test", 
-                     label = "p.format") +
+                     label = "p.signif") +
   theme_pubr(base_size = 14, legend = "right") + 
   scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
   labs(title = "miR-106b-25 targets in ccRCC",
@@ -317,7 +317,7 @@ boxplot_data_proteomics %>%
   facet_wrap(~gene_symbol, scales = "free") +
   stat_compare_means(comparisons = list(c("N1", "T1"), c("N2", "T2"), c("Nall", "Tall")), 
                      method = "wilcox.test", 
-                     label = "p.format") +
+                     label = "p.signif") +
   theme_pubr(base_size = 14, legend = "right") + 
   scale_fill_manual(values = c("Tumor" = "tomato", "Normal" = "steelblue")) +
   labs(title = "miR-106b-25 targets in ccRCC",
